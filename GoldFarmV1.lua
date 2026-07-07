@@ -7,10 +7,13 @@ local VirtualInputManager = game:GetService("VirtualInputManager")
 local player = Players.LocalPlayer
 
 ----------------------------------------------------------------
--- INTEGRASI MODUL GAME & KONFIGURASI
+-- INTEGRASI MODUL GAME & KONFIGURASI (DIPROTEKSI)
 ----------------------------------------------------------------
-local Packets = require(ReplicatedStorage.Modules.Packets)
-local GameFunctions = require(ReplicatedStorage.Game.functions) 
+local Packets, GameFunctions
+pcall(function()
+    Packets = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Packets"))
+    GameFunctions = require(ReplicatedStorage:WaitForChild("Game"):WaitForChild("functions"))
+end)
 
 -- Filter Auto-Pickup
 local TARGET_ITEMS = {
@@ -29,10 +32,10 @@ local longWaitDuration = 6.3
 local ARRIVE_THRESHOLD = 1.5
 
 -- Status Kontrol Internal Skrip
-local isRunning = true -- Langsung TRUE biar Autostart
+local isRunning = true 
 local runId = 1
 local autoClickerActive = false
-local clickInterval = 0.1 -- Kecepatan getok batu emas (0.1 detik)
+local clickInterval = 0.1 
 local bodyVelocity = nil
 
 ----------------------------------------------------------------
@@ -144,7 +147,9 @@ end
 
 local function fireClickAt(pos)
     pcall(function()
-        VirtualInputManager:SendTouchTap(pos, false)
+        if VirtualInputManager then
+            VirtualInputManager:SendTouchTap(pos, false)
+        end
     end)
 end
 
@@ -160,7 +165,7 @@ local function runAutoClicker(thisRunId)
 end
 
 ----------------------------------------------------------------
--- 🟢 BACKGROUND WORKERS (SISTEM OTOMATISASI BELAKANG LAYAR)
+-- 🟢 BACKGROUND WORKERS (SISTEM OTOMATISASI AMAN PCALL)
 ----------------------------------------------------------------
 
 -- 1. Fast Auto-Eat 5 CPS (Min Health 50)
@@ -173,14 +178,16 @@ task.spawn(function()
             local humanoid = character.Humanoid
             if humanoid.Health > 0 and humanoid.Health <= MIN_HEALTH then
                 pcall(function()
-                    Packets.UseBagItem.send(ITEM_ARGUMENT)
+                    if Packets and Packets.UseBagItem then
+                        Packets.UseBagItem.send(ITEM_ARGUMENT)
+                    end
                 end)
             end
         end
     end
 end)
 
--- 2. Filter Auto-Pickup Radius 24 Studs (Bloodfruit & Raw Gold) - FIXED TYPO HERE
+-- 2. Filter Auto-Pickup Radius 24 Studs (Bloodfruit & Raw Gold)
 task.spawn(function()
     while true do
         task.wait(0.1) 
@@ -193,11 +200,13 @@ task.spawn(function()
                     local itemPos = item:GetPivot().Position
                     if (myPos - itemPos).Magnitude <= 24 then
                         pcall(function()
-                            local validItem = GameFunctions.getItem(item)
-                            if validItem then
-                                local entityId = validItem:GetAttribute("EntityID")
-                                if entityId then
-                                    Packets.Pickup.send(entityId)
+                            if GameFunctions and Packets and Packets.Pickup then
+                                local validItem = GameFunctions.getItem(item)
+                                if validItem then
+                                    local entityId = validItem:GetAttribute("EntityID")
+                                    if entityId then
+                                        Packets.Pickup.send(entityId)
+                                    end
                                 end
                             end
                         end)
@@ -221,7 +230,11 @@ task.spawn(function()
             
             local regionSize = Vector3.new(TRIGGER_RADIUS * 2, TRIGGER_RADIUS * 2, TRIGGER_RADIUS * 2)
             local region = Region3.new(myPos - (regionSize/2), myPos + (regionSize/2))
-            local partsInRegion = workspace:FindPartsInRegion3(region, character, 100)
+            
+            local partsInRegion = {}
+            pcall(function()
+                partsInRegion = workspace:FindPartsInRegion3(region, character, 100)
+            end)
             
             for _, part in ipairs(partsInRegion) do
                 if part.Name == "Gold Node" or (part.Parent and part.Parent.Name == "Gold Node") then
@@ -274,11 +287,11 @@ local function moveToPoint(hrp, targetPos, thisRunId)
         local distance = toTarget.Magnitude
 
         if distance <= ARRIVE_THRESHOLD then
-            bodyVelocity.Velocity = Vector3.zero
+            if bodyVelocity then bodyVelocity.Velocity = Vector3.zero end
             reached = true
         else
             local direction = toTarget.Unit
-            bodyVelocity.Velocity = direction * currentSpeed
+            if bodyVelocity then bodyVelocity.Velocity = direction * currentSpeed end
         end
         RunService.Heartbeat:Wait()
     end
@@ -310,5 +323,5 @@ local function runPathLoop(thisRunId)
 end
 
 -- Eksekusi Utama
-print("[BOT SYSTEM] Autostart diaktifkan tanpa error!")
+print("[BOT SYSTEM] Autostart Aktif Berhasil Ter-Inject Aman!")
 task.spawn(runPathLoop, runId)
