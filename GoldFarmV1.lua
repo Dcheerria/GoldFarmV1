@@ -7,7 +7,7 @@ local VirtualInputManager = game:GetService("VirtualInputManager")
 local player = Players.LocalPlayer
 
 ----------------------------------------------------------------
--- INTEGRASI MODUL GAME & KONFIGURASI (DIPROTEKSI)
+-- INTEGRASI MODUL GAME & KONFIGURASI
 ----------------------------------------------------------------
 local Packets, GameFunctions
 pcall(function()
@@ -37,6 +37,34 @@ local runId = 1
 local autoClickerActive = false
 local clickInterval = 0.1 
 local bodyVelocity = nil
+
+----------------------------------------------------------------
+-- 📦 CACHE SYSTEM GOLD NODE (OPTIMASI CLAUDE - ANTI LAG)
+----------------------------------------------------------------
+local goldNodes = {}
+
+-- Fungsi masukin ke cache
+local function checkAndCache(obj)
+    if obj.Name == "Gold Node" then
+        table.insert(goldNodes, obj)
+    end
+end
+
+-- Scan awal pas skrip di-run (Cuma sekali!)
+for _, obj in ipairs(workspace:GetDescendants()) do
+    checkAndCache(obj)
+end
+
+-- Pantau batuan baru yang spawn atau hancur secara real-time
+workspace.DescendantAdded:Connect(checkAndCache)
+workspace.DescendantRemoving:Connect(function(obj)
+    for i, node in ipairs(goldNodes) do
+        if node == obj then
+            table.remove(goldNodes, i)
+            break
+        end
+    end
+end)
 
 ----------------------------------------------------------------
 -- WAYPOINTS
@@ -135,14 +163,11 @@ local waypoints = {
 }
 
 ----------------------------------------------------------------
--- LOGIKA KOORDINAT KLIK (Lock Tengah Layar)
+-- LOGIKA KOORDINAT KLIK
 ----------------------------------------------------------------
 local function getScreenCenter()
     local camera = workspace.CurrentCamera
-    if camera then
-        return camera.ViewportSize / 2
-    end
-    return Vector2.new(0, 0)
+    return camera and camera.ViewportSize / 2 or Vector2.new(0, 0)
 end
 
 local function fireClickAt(pos)
@@ -165,7 +190,7 @@ local function runAutoClicker(thisRunId)
 end
 
 ----------------------------------------------------------------
--- 🟢 BACKGROUND WORKERS (SISTEM OTOMATISASI AMAN PCALL)
+-- 🟢 BACKGROUND WORKERS (SISTEM OTOMATISASI BELAKANG LAYAR)
 ----------------------------------------------------------------
 
 -- 1. Fast Auto-Eat 5 CPS (Min Health 50)
@@ -217,32 +242,28 @@ task.spawn(function()
     end
 end)
 
--- 3. Auto-Toggle Autoclicker Pas Dekat "Gold Node" (Radius 2 Studs)
-local TRIGGER_RADIUS = 2 
+-- 3. Auto-Toggle Autoclicker Pas Dekat "Gold Node" (Pake Loop Cache Super Ringan)
+local TRIGGER_RADIUS = 14 -- Radius disesuaikan karena pakai GetPivot() jarak model pusat ke pemain
 task.spawn(function()
     while true do
-        task.wait(0.2) 
+        task.wait(0.2) -- Loop berjalan super efisien tiap 0.2 detik
         local character = player.Character
         if character and character:FindFirstChild("HumanoidRootPart") then
-            local hrp = character.HumanoidRootPart
-            local myPos = hrp.Position
+            local myPos = character.HumanoidRootPart.Position
             local foundNodeClose = false
-            
-            local regionSize = Vector3.new(TRIGGER_RADIUS * 2, TRIGGER_RADIUS * 2, TRIGGER_RADIUS * 2)
-            local region = Region3.new(myPos - (regionSize/2), myPos + (regionSize/2))
-            
-            local partsInRegion = {}
-            pcall(function()
-                partsInRegion = workspace:FindPartsInRegion3(region, character, 100)
-            end)
-            
-            for _, part in ipairs(partsInRegion) do
-                if part.Name == "Gold Node" or (part.Parent and part.Parent.Name == "Gold Node") then
-                    foundNodeClose = true
-                    break 
+
+            -- Looping data dari table cache yang sudah siap pakai (Sangat enteng untuk CPU)
+            for _, obj in ipairs(goldNodes) do
+                if obj and obj.Parent then
+                    local success, nodePos = pcall(function() return obj:GetPivot().Position end)
+                    if success and (myPos - nodePos).Magnitude <= TRIGGER_RADIUS then
+                        foundNodeClose = true
+                        break
+                    end
                 end
             end
-            
+
+            -- Kontrol menyalakan/mematikan pemukul emas otomatis
             if foundNodeClose then
                 if not autoClickerActive then
                     autoClickerActive = true
@@ -260,7 +281,7 @@ task.spawn(function()
 end)
 
 ----------------------------------------------------------------
--- LOGIKA MOVEMENT & AUTOSTART LOOP
+-- LOGIKA MOVEMENT & ADAPTIVE CPU THROTTLE
 ----------------------------------------------------------------
 local function getCharacterParts()
     local character = player.Character or player.CharacterAdded:Wait()
@@ -293,7 +314,13 @@ local function moveToPoint(hrp, targetPos, thisRunId)
             local direction = toTarget.Unit
             if bodyVelocity then bodyVelocity.Velocity = direction * currentSpeed end
         end
-        RunService.Heartbeat:Wait()
+        
+        -- Adaptive CPU Throttle biar baterai/prosesor adem pas jalan jauh lurus
+        if distance > 45 then
+            task.wait(0.05) 
+        else
+            RunService.Heartbeat:Wait() 
+        end
     end
     if bodyVelocity then bodyVelocity.Velocity = Vector3.zero end
 end
@@ -323,5 +350,5 @@ local function runPathLoop(thisRunId)
 end
 
 -- Eksekusi Utama
-print("[BOT SYSTEM] Autostart Aktif Berhasil Ter-Inject Aman!")
+print("[BOT SYSTEM] Headless Cache-Optimized Version Ter-Inject Sempurna!")
 task.spawn(runPathLoop, runId)
