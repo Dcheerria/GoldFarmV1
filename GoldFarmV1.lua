@@ -7,6 +7,7 @@ local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local CollectionService = game:GetService("CollectionService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local VirtualInputManager = game:GetService("VirtualInputManager")
 local Lighting = game:GetService("Lighting")
 
 local player = Players.LocalPlayer
@@ -195,26 +196,28 @@ workspace.DescendantRemoving:Connect(function(obj)
 end)
 
 ----------------------------------------------------------------
--- AUTOCLICKER: swing tool langsung via Activate() — lebih reliable
--- dari VirtualInputManager:SendTouchTap yang gak selalu ke-detect
+-- AUTOCLICKER: tap ke tengah layar (trigger swing tool)
 ----------------------------------------------------------------
 local autoClickerActive = false
 local autoClickRunId    = 0
 
-local function swingTool()
+local function getScreenCenter()
+    local camera = workspace.CurrentCamera
+    return camera and (camera.ViewportSize / 2) or Vector2.new(0, 0)
+end
+
+local function fireClickAt(pos)
     pcall(function()
-        local character = player.Character
-        if not character then return end
-        local tool = character:FindFirstChildWhichIsA("Tool")
-        if tool then
-            tool:Activate()
-        end
+        VirtualInputManager:SendTouchTap(pos, false)
     end)
 end
 
 local function runAutoClicker(thisRunId)
     while autoClickerActive and thisRunId == autoClickRunId do
-        swingTool()
+        local pos = getScreenCenter()
+        if pos.X > 0 then
+            fireClickAt(pos)
+        end
         task.wait(clickInterval)
     end
 end
@@ -453,10 +456,13 @@ task.spawn(function()
             local bedButton = customization:WaitForChild("BedButton", 10)
             if not bedButton then return end
 
-            -- klik tiap 5s selama SpawnGui masih visible/ada
             while spawnGui and spawnGui.Parent and spawnGui.Enabled ~= false do
-                pcall(function() bedButton:Activate() end)
-                print("[BOT] BedButton diklik.")
+                pcall(function()
+                    -- fire semua kemungkinan event touch/klik di HP
+                    local pos = bedButton.AbsolutePosition + bedButton.AbsoluteSize / 2
+                    VirtualInputManager:SendTouchTap(pos, false)
+                end)
+                print("[BOT] BedButton di-tap.")
                 task.wait(5)
             end
         end)
