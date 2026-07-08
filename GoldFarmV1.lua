@@ -446,6 +446,15 @@ end
 -- AUTO BED SPAWN: klik BedButton tiap kali SpawnGui muncul
 -- (handle first load + respawn setelah mati)
 ----------------------------------------------------------------
+-- AUTO BED SPAWN: pakai SendTouchTap ke AbsolutePosition button
+-- (approach sama persis kayak autoclicker reticle yang works)
+----------------------------------------------------------------
+local function fireClickAt(pos)
+    pcall(function()
+        VirtualInputManager:SendTouchTap(pos, false)
+    end)
+end
+
 task.spawn(function()
     local playerGui = player:WaitForChild("PlayerGui")
 
@@ -456,13 +465,24 @@ task.spawn(function()
             local bedButton = customization:WaitForChild("BedButton", 10)
             if not bedButton then return end
 
-            while spawnGui and spawnGui.Parent and spawnGui.Enabled ~= false do
-                pcall(function()
-                    -- fire semua kemungkinan event touch/klik di HP
-                    local pos = bedButton.AbsolutePosition + bedButton.AbsoluteSize / 2
-                    VirtualInputManager:SendTouchTap(pos, false)
-                end)
-                print("[BOT] BedButton di-tap.")
+            -- tunggu 2 frame biar AbsolutePosition ke-render dulu
+            RunService.Heartbeat:Wait()
+            RunService.Heartbeat:Wait()
+
+            while spawnGui and spawnGui.Parent do
+                -- ambil posisi tengah button tiap iterasi
+                -- (sama persis kayak getReticleScreenPosition di versi lama)
+                local absPos = bedButton.AbsolutePosition
+                local absSize = bedButton.AbsoluteSize
+                local tapPos = absPos + absSize / 2
+
+                if tapPos.X > 0 and tapPos.Y > 0 then
+                    fireClickAt(tapPos)
+                    print("[BOT] BedButton tap:", tapPos.X, tapPos.Y)
+                else
+                    print("[BOT] AbsolutePosition belum valid:", tapPos.X, tapPos.Y)
+                end
+
                 task.wait(5)
             end
         end)
