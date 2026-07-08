@@ -442,13 +442,32 @@ local function runPathLoop(thisRunId)
     end
 end
 
+---------------------------------------------------------------------------------------------------------------------------
+-- AUTO BED SPAWN: pakai reticle invisible sebagai perantara
+-- (mekanisme persis sama kayak autoclicker versi GUI yang works)
 ----------------------------------------------------------------
--- AUTO BED SPAWN: klik BedButton tiap kali SpawnGui muncul
--- (handle first load + respawn setelah mati)
-----------------------------------------------------------------
--- AUTO BED SPAWN: pakai SendTouchTap ke AbsolutePosition button
--- (approach sama persis kayak autoclicker reticle yang works)
-----------------------------------------------------------------
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "BotGui"
+screenGui.ResetOnSpawn = false
+screenGui.IgnoreGuiInset = true
+screenGui.Parent = player:WaitForChild("PlayerGui")
+
+-- reticle invisible, posisi default tengah layar
+local reticle = Instance.new("Frame")
+reticle.Name = "BotReticle"
+reticle.AnchorPoint = Vector2.new(0.5, 0.5)
+reticle.Size = UDim2.new(0, 1, 0, 1)
+reticle.Position = UDim2.new(0.5, 0, 0.5, 0)
+reticle.BackgroundTransparency = 1
+reticle.ZIndex = 1
+reticle.Parent = screenGui
+
+local function getReticlePos()
+    local absPos = reticle.AbsolutePosition
+    local absSize = reticle.AbsoluteSize
+    return absPos + absSize / 2
+end
+
 local function fireClickAt(pos)
     pcall(function()
         VirtualInputManager:SendTouchTap(pos, false)
@@ -465,36 +484,27 @@ task.spawn(function()
             local bedButton = customization:WaitForChild("BedButton", 10)
             if not bedButton then return end
 
-            -- tunggu 2 frame biar AbsolutePosition ke-render dulu
+            -- tunggu beberapa frame biar reticle ke-render dan AbsolutePosition valid
+            RunService.Heartbeat:Wait()
             RunService.Heartbeat:Wait()
             RunService.Heartbeat:Wait()
 
             while spawnGui and spawnGui.Parent do
-                -- ambil posisi tengah button tiap iterasi
-                -- (sama persis kayak getReticleScreenPosition di versi lama)
-                local absPos = bedButton.AbsolutePosition
-                local absSize = bedButton.AbsoluteSize
-                local tapPos = absPos + absSize / 2
-
-                if tapPos.X > 0 and tapPos.Y > 0 then
-                    fireClickAt(tapPos)
-                    print("[BOT] BedButton tap:", tapPos.X, tapPos.Y)
-                else
-                    print("[BOT] AbsolutePosition belum valid:", tapPos.X, tapPos.Y)
+                local pos = getReticlePos()
+                if pos.X > 0 and pos.Y > 0 then
+                    fireClickAt(pos)
+                    print("[BOT] BedButton tapped via reticle:", pos.X, pos.Y)
                 end
-
                 task.wait(5)
             end
         end)
     end
 
-    -- handle SpawnGui yang udah ada saat script jalan
     local existing = playerGui:FindFirstChild("SpawnGui")
     if existing then
         task.spawn(tryClickBed, existing)
     end
 
-    -- handle SpawnGui yang muncul setelah mati/respawn
     playerGui.ChildAdded:Connect(function(child)
         if child.Name == "SpawnGui" then
             task.spawn(tryClickBed, child)
