@@ -1,13 +1,19 @@
+-- LocalScript, taruh di StarterPlayerScripts
+-- Versi headless: semua fitur langsung aktif tanpa GUI.
+-- Fix: FindPartsInRegion3 -> GetPartBoundsInBox + Gold Node cache,
+--      CPU throttle adaptive, Optimazia auto-apply, connection cleanup.
+
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local CollectionService = game:GetService("CollectionService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local VirtualInputManager = game:GetService("VirtualInputManager")
+local Lighting = game:GetService("Lighting")
 
 local player = Players.LocalPlayer
 
 ----------------------------------------------------------------
--- INTEGRASI MODUL GAME & KONFIGURASI
+-- INTEGRASI MODUL GAME (DIPROTEKSI)
 ----------------------------------------------------------------
 local Packets, GameFunctions
 pcall(function()
@@ -15,59 +21,26 @@ pcall(function()
     GameFunctions = require(ReplicatedStorage:WaitForChild("Game"):WaitForChild("functions"))
 end)
 
--- Filter Auto-Pickup
+----------------------------------------------------------------
+-- KONFIGURASI
+----------------------------------------------------------------
 local TARGET_ITEMS = {
     ["Bloodfruit"] = true,
     ["Raw Gold"] = true,
 }
 
--- Konfigurasi Fast Auto-Eat (5 CPS & Min Health 50)
-local MIN_HEALTH = 50
+local MIN_HEALTH    = 50
 local ITEM_ARGUMENT = 6
-local CPS = 5
+local CPS           = 5
 
--- Konfigurasi Pergerakan & Jeda Rute
-local currentSpeed = 16.5
-local longWaitDuration = 6.3
-local ARRIVE_THRESHOLD = 1.5
-
--- Status Kontrol Internal Skrip
-local isRunning = true 
-local runId = 1
-local autoClickerActive = false
-local clickInterval = 0.1 
-local bodyVelocity = nil
+local currentSpeed      = 16.5
+local longWaitDuration  = 6.3
+local ARRIVE_THRESHOLD  = 1.5
+local TRIGGER_RADIUS    = 2
+local clickInterval     = 0.1
 
 ----------------------------------------------------------------
--- 📦 CACHE SYSTEM GOLD NODE (OPTIMASI CLAUDE - ANTI LAG)
-----------------------------------------------------------------
-local goldNodes = {}
-
--- Fungsi masukin ke cache
-local function checkAndCache(obj)
-    if obj.Name == "Gold Node" then
-        table.insert(goldNodes, obj)
-    end
-end
-
--- Scan awal pas skrip di-run (Cuma sekali!)
-for _, obj in ipairs(workspace:GetDescendants()) do
-    checkAndCache(obj)
-end
-
--- Pantau batuan baru yang spawn atau hancur secara real-time
-workspace.DescendantAdded:Connect(checkAndCache)
-workspace.DescendantRemoving:Connect(function(obj)
-    for i, node in ipairs(goldNodes) do
-        if node == obj then
-            table.remove(goldNodes, i)
-            break
-        end
-    end
-end)
-
-----------------------------------------------------------------
--- WAYPOINTS
+-- WAYPOINTS: {Position, fixedWait or nil, isLongWait}
 ----------------------------------------------------------------
 local waypoints = {
     {Vector3.new(-147.73, -30.07, -165.87), nil, true},
@@ -163,67 +136,130 @@ local waypoints = {
 }
 
 ----------------------------------------------------------------
--- LOGIKA KOORDINAT KLIK
+-- OPTIMAZIA: auto-apply saat startup (tanpa GUI)
 ----------------------------------------------------------------
+local function applyOptimazia()
+    pcall(function()
+        Lighting.GlobalShadows = false
+        Lighting.Technology = Enum.Technology.Compatibility
+        Lighting.FogEnd = 100000
+        Lighting.Brightness = 1
+        Lighting.Ambient = Color3.fromRGB(128, 128, 128)
+        Lighting.OutdoorAmbient = Color3.fromRGB(128, 128, 128)
+
+        for _, child in ipairs(Lighting:GetChildren()) do
+            if child:IsA("PostEffect") or child:IsA("Sky") or child:IsA("Atmosphere") then
+                pcall(function() child.Enabled = false end)
+            end
+        end
+
+        workspace.Terrain.Decoration = false
+        workspace.Terrain.Transparency = 1
+
+        settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
+    end)
+end
+
+applyOptimazia()
+
+----------------------------------------------------------------
+-- GOLD NODE CACHE (fix: gak pakai GetDescendants tiap loop)
+-- Cache semua Gold Node sekali di awal, update otomatis kalau
+-- ada yang spawn/despawn selama game jalan.
+----------------------------------------------------------------
+local goldNodes = {}
+
+local function indexGoldNodes()
+    for _, obj in ipairs(workspace:GetDescendants()) do
+        if obj.Name == "Gold Node" and obj:IsA("Model") then
+            table.insert(goldNodes, obj)
+        end
+    end
+end
+
+indexGoldNodes()
+
+workspace.DescendantAdded:Connect(function(obj)
+    if obj.Name == "Gold Node" and obj:IsA("Model") then
+        table.insert(goldNodes, obj)
+    end
+end)
+
+workspace.DescendantRemoving:Connect(function(obj)
+    for i, node in ipairs(goldNodes) do
+        if node == obj then
+            table.remove(goldNodes, i)
+            break
+        end
+    end
+end)
+
+----------------------------------------------------------------
+-- AUTOCLICKER (klik tengah layar)
+----------------------------------------------------------------
+local autoClickerActive = false
+local autoClickRunId    = 0
+
 local function getScreenCenter()
     local camera = workspace.CurrentCamera
-    return camera and camera.ViewportSize / 2 or Vector2.new(0, 0)
+    return camera and (camera.ViewportSize / 2) or Vector2.new(0, 0)
 end
 
 local function fireClickAt(pos)
     pcall(function()
-        if VirtualInputManager then
-            VirtualInputManager:SendTouchTap(pos, false)
-        end
+        VirtualInputManager:SendTouchTap(pos, false)
     end)
 end
 
-local autoClickRunId = 0
 local function runAutoClicker(thisRunId)
     while autoClickerActive and thisRunId == autoClickRunId do
-        local centerPos = getScreenCenter()
-        if centerPos.X > 0 then
-            fireClickAt(centerPos)
+        local pos = getScreenCenter()
+        if pos.X > 0 then
+            fireClickAt(pos)
         end
         task.wait(clickInterval)
     end
 end
 
 ----------------------------------------------------------------
--- 🟢 BACKGROUND WORKERS (SISTEM OTOMATISASI BELAKANG LAYAR)
+-- BACKGROUND WORKER 1: Fast Auto-Eat (5 CPS, min health 50)
 ----------------------------------------------------------------
-
--- 1. Fast Auto-Eat 5 CPS (Min Health 50)
 task.spawn(function()
     local eatDelay = 1 / CPS
     while true do
         task.wait(eatDelay)
-        local character = player.Character
-        if character and character:FindFirstChild("Humanoid") then
-            local humanoid = character.Humanoid
-            if humanoid.Health > 0 and humanoid.Health <= MIN_HEALTH then
-                pcall(function()
-                    if Packets and Packets.UseBagItem then
-                        Packets.UseBagItem.send(ITEM_ARGUMENT)
-                    end
-                end)
+        pcall(function()
+            local character = player.Character
+            if not character then return end
+            local humanoid = character:FindFirstChild("Humanoid")
+            if humanoid and humanoid.Health > 0 and humanoid.Health <= MIN_HEALTH then
+                if Packets and Packets.UseBagItem then
+                    Packets.UseBagItem.send(ITEM_ARGUMENT)
+                end
             end
-        end
+        end)
     end
 end)
 
--- 2. Filter Auto-Pickup Radius 24 Studs (Bloodfruit & Raw Gold)
+----------------------------------------------------------------
+-- BACKGROUND WORKER 2: Auto-Pickup radius 24 studs
+----------------------------------------------------------------
 task.spawn(function()
     while true do
-        task.wait(0.1) 
-        local character = player.Character
-        if character and character:FindFirstChild("HumanoidRootPart") then
-            local myPos = character.HumanoidRootPart.Position
-            
+        task.wait(0.1)
+        pcall(function()
+            local character = player.Character
+            if not character then return end
+            local hrp = character:FindFirstChild("HumanoidRootPart")
+            if not hrp then return end
+            local myPos = hrp.Position
+
             for _, item in ipairs(CollectionService:GetTagged("Pickup")) do
-                if TARGET_ITEMS[item.Name] and (item:IsA("BasePart") or item:IsA("Model")) then
-                    local itemPos = item:GetPivot().Position
-                    if (myPos - itemPos).Magnitude <= 24 then
+                if TARGET_ITEMS[item.Name] then
+                    local ok, itemPos = pcall(function()
+                        return item:GetPivot().Position
+                    end)
+                    if ok and (myPos - itemPos).Magnitude <= 24 then
                         pcall(function()
                             if GameFunctions and Packets and Packets.Pickup then
                                 local validItem = GameFunctions.getItem(item)
@@ -238,32 +274,58 @@ task.spawn(function()
                     end
                 end
             end
-        end
+        end)
     end
 end)
 
--- 3. Auto-Toggle Autoclicker Pas Dekat "Gold Node" (Pake Loop Cache Super Ringan)
-local TRIGGER_RADIUS = 14 -- Radius disesuaikan karena pakai GetPivot() jarak model pusat ke pemain
+----------------------------------------------------------------
+-- BACKGROUND WORKER 3: Auto-detect Gold Node (pakai cache, fix
+-- FindPartsInRegion3 deprecated -> GetPartBoundsInBox)
+----------------------------------------------------------------
 task.spawn(function()
+    local overlapParams = OverlapParams.new()
+
     while true do
-        task.wait(0.2) -- Loop berjalan super efisien tiap 0.2 detik
-        local character = player.Character
-        if character and character:FindFirstChild("HumanoidRootPart") then
-            local myPos = character.HumanoidRootPart.Position
+        task.wait(0.2)
+        pcall(function()
+            local character = player.Character
+            if not character then return end
+            local hrp = character:FindFirstChild("HumanoidRootPart")
+            if not hrp then return end
+            local myPos = hrp.Position
+
             local foundNodeClose = false
 
-            -- Looping data dari table cache yang sudah siap pakai (Sangat enteng untuk CPU)
-            for _, obj in ipairs(goldNodes) do
-                if obj and obj.Parent then
-                    local success, nodePos = pcall(function() return obj:GetPivot().Position end)
-                    if success and (myPos - nodePos).Magnitude <= TRIGGER_RADIUS then
+            -- cek dari cache goldNodes (jauh lebih ringan dari GetDescendants tiap frame)
+            for _, node in ipairs(goldNodes) do
+                if node and node.Parent then
+                    local ok, nodePos = pcall(function()
+                        return node:GetPivot().Position
+                    end)
+                    if ok and (myPos - nodePos).Magnitude <= TRIGGER_RADIUS then
                         foundNodeClose = true
                         break
                     end
                 end
             end
 
-            -- Kontrol menyalakan/mematikan pemukul emas otomatis
+            -- fallback: kalau cache kosong, cek pakai GetPartBoundsInBox
+            -- (pengganti FindPartsInRegion3 yang deprecated)
+            if not foundNodeClose and #goldNodes == 0 then
+                local regionSize = Vector3.new(TRIGGER_RADIUS * 2, TRIGGER_RADIUS * 2, TRIGGER_RADIUS * 2)
+                local parts = {}
+                pcall(function()
+                    parts = workspace:GetPartBoundsInBox(CFrame.new(myPos), regionSize, overlapParams)
+                end)
+                for _, part in ipairs(parts) do
+                    if part.Name == "Gold Node"
+                        or (part.Parent and part.Parent.Name == "Gold Node") then
+                        foundNodeClose = true
+                        break
+                    end
+                end
+            end
+
             if foundNodeClose then
                 if not autoClickerActive then
                     autoClickerActive = true
@@ -276,13 +338,17 @@ task.spawn(function()
                     autoClickRunId += 1
                 end
             end
-        end
+        end)
     end
 end)
 
 ----------------------------------------------------------------
--- LOGIKA MOVEMENT & ADAPTIVE CPU THROTTLE
+-- MOVEMENT LOGIC (BodyVelocity + adaptive CPU throttle)
 ----------------------------------------------------------------
+local isRunning  = true
+local runId      = 1
+local bodyVelocity = nil
+
 local function getCharacterParts()
     local character = player.Character or player.CharacterAdded:Wait()
     local hrp = character:WaitForChild("HumanoidRootPart")
@@ -291,6 +357,10 @@ local function getCharacterParts()
 end
 
 local function createBodyVelocity(hrp)
+    -- hapus BodyVelocity lama kalau ada (biar gak numpuk)
+    local old = hrp:FindFirstChild("PathBodyVelocity")
+    if old then old:Destroy() end
+
     local bv = Instance.new("BodyVelocity")
     bv.Name = "PathBodyVelocity"
     bv.MaxForce = Vector3.new(1, 1, 1) * math.huge
@@ -304,39 +374,56 @@ local function moveToPoint(hrp, targetPos, thisRunId)
     local reached = false
     while isRunning and thisRunId == runId and not reached do
         local currentPos = hrp.Position
-        local toTarget = targetPos - currentPos
-        local distance = toTarget.Magnitude
+        local toTarget   = targetPos - currentPos
+        local distance   = toTarget.Magnitude
 
         if distance <= ARRIVE_THRESHOLD then
             if bodyVelocity then bodyVelocity.Velocity = Vector3.zero end
             reached = true
         else
-            local direction = toTarget.Unit
-            if bodyVelocity then bodyVelocity.Velocity = direction * currentSpeed end
+            if bodyVelocity then
+                bodyVelocity.Velocity = toTarget.Unit * currentSpeed
+            end
         end
-        
-        -- Adaptive CPU Throttle biar baterai/prosesor adem pas jalan jauh lurus
-        if distance > 45 then
-            task.wait(0.05) 
+
+        -- adaptive throttle: jauh -> hemat CPU (~20fps), deket -> full precision
+        if distance > 50 then
+            task.wait(0.03)
         else
-            RunService.Heartbeat:Wait() 
+            RunService.Heartbeat:Wait()
         end
     end
     if bodyVelocity then bodyVelocity.Velocity = Vector3.zero end
 end
 
 local function runPathLoop(thisRunId)
-    local character, hrp, humanoid = getCharacterParts()
+    local _, hrp, _ = getCharacterParts()
     bodyVelocity = createBodyVelocity(hrp)
+
+    -- respawn handler: kalau character mati/respawn, restart loop
+    local respawnConn
+    respawnConn = player.CharacterAdded:Connect(function(newChar)
+        if bodyVelocity then
+            pcall(function() bodyVelocity:Destroy() end)
+            bodyVelocity = nil
+        end
+        respawnConn:Disconnect()
+        task.wait(1) -- tunggu character fully loaded
+        runId += 1
+        task.spawn(runPathLoop, runId)
+    end)
 
     while isRunning and thisRunId == runId do
         for i, waypoint in ipairs(waypoints) do
             if not isRunning or thisRunId ~= runId then break end
 
-            local targetPos = waypoint[1]
-            local fixedWait = waypoint[2]
+            local targetPos  = waypoint[1]
+            local fixedWait  = waypoint[2]
             local isLongWait = waypoint[3]
-            local waitTime = isLongWait and longWaitDuration or fixedWait
+            local waitTime   = isLongWait and longWaitDuration or fixedWait
+
+            -- cek hrp masih valid sebelum gerak
+            if not hrp or not hrp.Parent then break end
 
             moveToPoint(hrp, targetPos, thisRunId)
 
@@ -347,8 +434,48 @@ local function runPathLoop(thisRunId)
             end
         end
     end
+
+    if bodyVelocity then
+        pcall(function() bodyVelocity:Destroy() end)
+        bodyVelocity = nil
+    end
 end
 
--- Eksekusi Utama
-print("[BOT SYSTEM] Headless Cache-Optimized Version Ter-Inject Sempurna!")
+----------------------------------------------------------------
+-- AUTO BED SPAWN: klik BedButton tiap kali SpawnGui muncul
+-- (handle first load + respawn setelah mati)
+----------------------------------------------------------------
+task.spawn(function()
+    local playerGui = player:WaitForChild("PlayerGui")
+
+    local function tryClickBed(spawnGui)
+        pcall(function()
+            local customization = spawnGui:WaitForChild("Customization", 10)
+            if not customization then return end
+            local bedButton = customization:WaitForChild("BedButton", 10)
+            if not bedButton then return end
+
+            -- klik tiap 5s selama SpawnGui masih visible/ada
+            while spawnGui and spawnGui.Parent and spawnGui.Enabled ~= false do
+                pcall(function() bedButton:Activate() end)
+                print("[BOT] BedButton diklik.")
+                task.wait(5)
+            end
+        end)
+    end
+
+    -- handle SpawnGui yang udah ada saat script jalan
+    local existing = playerGui:FindFirstChild("SpawnGui")
+    if existing then
+        task.spawn(tryClickBed, existing)
+    end
+
+    -- handle SpawnGui yang muncul setelah mati/respawn
+    playerGui.ChildAdded:Connect(function(child)
+        if child.Name == "SpawnGui" then
+            task.spawn(tryClickBed, child)
+        end
+    end)
+end)
+print("[BOT] Starting... Optimazia ON, semua worker aktif.")
 task.spawn(runPathLoop, runId)
