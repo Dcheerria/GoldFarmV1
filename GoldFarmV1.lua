@@ -7,7 +7,6 @@ local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local CollectionService = game:GetService("CollectionService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local VirtualInputManager = game:GetService("VirtualInputManager")
 local Lighting = game:GetService("Lighting")
 
 local player = Players.LocalPlayer
@@ -36,7 +35,7 @@ local CPS           = 5
 local currentSpeed      = 16.5
 local longWaitDuration  = 6.3
 local ARRIVE_THRESHOLD  = 1.5
-local TRIGGER_RADIUS    = 2
+local TRIGGER_RADIUS    = 3
 local clickInterval     = 0.1
 
 ----------------------------------------------------------------
@@ -163,21 +162,22 @@ end
 applyOptimazia()
 
 ----------------------------------------------------------------
--- GOLD NODE CACHE (fix: gak pakai GetDescendants tiap loop)
--- Cache semua Gold Node sekali di awal, update otomatis kalau
--- ada yang spawn/despawn selama game jalan.
+-- GOLD NODE CACHE (fix: delay indexing biar workspace loaded dulu)
 ----------------------------------------------------------------
 local goldNodes = {}
 
 local function indexGoldNodes()
+    goldNodes = {} -- reset dulu biar gak duplikat
     for _, obj in ipairs(workspace:GetDescendants()) do
         if obj.Name == "Gold Node" and obj:IsA("Model") then
             table.insert(goldNodes, obj)
         end
     end
+    print("[BOT] Gold Node ter-index:", #goldNodes, "node ditemukan.")
 end
 
-indexGoldNodes()
+-- delay indexing biar workspace udah fully streamed/loaded
+task.delay(3, indexGoldNodes)
 
 workspace.DescendantAdded:Connect(function(obj)
     if obj.Name == "Gold Node" and obj:IsA("Model") then
@@ -195,28 +195,26 @@ workspace.DescendantRemoving:Connect(function(obj)
 end)
 
 ----------------------------------------------------------------
--- AUTOCLICKER (klik tengah layar)
+-- AUTOCLICKER: swing tool langsung via Activate() — lebih reliable
+-- dari VirtualInputManager:SendTouchTap yang gak selalu ke-detect
 ----------------------------------------------------------------
 local autoClickerActive = false
 local autoClickRunId    = 0
 
-local function getScreenCenter()
-    local camera = workspace.CurrentCamera
-    return camera and (camera.ViewportSize / 2) or Vector2.new(0, 0)
-end
-
-local function fireClickAt(pos)
+local function swingTool()
     pcall(function()
-        VirtualInputManager:SendTouchTap(pos, false)
+        local character = player.Character
+        if not character then return end
+        local tool = character:FindFirstChildWhichIsA("Tool")
+        if tool then
+            tool:Activate()
+        end
     end)
 end
 
 local function runAutoClicker(thisRunId)
     while autoClickerActive and thisRunId == autoClickRunId do
-        local pos = getScreenCenter()
-        if pos.X > 0 then
-            fireClickAt(pos)
-        end
+        swingTool()
         task.wait(clickInterval)
     end
 end
