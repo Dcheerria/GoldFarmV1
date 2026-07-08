@@ -202,8 +202,15 @@ local autoClickerActive = false
 local autoClickRunId    = 0
 
 local function getScreenCenter()
-    local camera = workspace.CurrentCamera
-    return camera and (camera.ViewportSize / 2) or Vector2.new(0, 0)
+    local absPos = reticle.AbsolutePosition
+    local absSize = reticle.AbsoluteSize
+    local pos = absPos + absSize / 2
+    -- fallback ke ViewportSize kalau reticle belum ke-render
+    if pos.X <= 0 or pos.Y <= 0 then
+        local camera = workspace.CurrentCamera
+        return camera and (camera.ViewportSize / 2) or Vector2.new(0, 0)
+    end
+    return pos
 end
 
 local function fireClickAt(pos)
